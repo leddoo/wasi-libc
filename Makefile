@@ -1,3 +1,10 @@
+default: finish
+
+
+# ----------------
+#  build parameters
+# ----------------
+
 # These variables are specifically meant to be overridable via the make
 # command-line.
 # ?= doesn't work for CC and AR because make has a default value for them.
@@ -42,6 +49,18 @@ TARGET_TRIPLE = wasm32-wasi-threads
 endif
 
 BUILTINS_LIB ?= $(shell ${CC} --print-libgcc-file-name)
+
+# These variables describe the locations of various files and
+# directories in the generated sysroot tree.
+SYSROOT_LIB := $(SYSROOT)/lib/$(TARGET_TRIPLE)
+SYSROOT_INC = $(SYSROOT)/include
+SYSROOT_SHARE = $(SYSROOT)/share/$(TARGET_TRIPLE)
+
+
+
+# ----------------
+#  sources
+# ----------------
 
 # These variables describe the locations of various files and directories in
 # the source tree.
@@ -299,6 +318,12 @@ LIBC_TOP_HALF_ALL_SOURCES = \
     $(LIBC_TOP_HALF_MUSL_SOURCES) \
     $(sort $(shell find $(LIBC_TOP_HALF_SOURCES) -name \*.[cs]))
 
+
+
+# ----------------
+#  compiler flags
+# ----------------
+
 # Add any extra flags
 CFLAGS = $(EXTRA_CFLAGS)
 # Set the target.
@@ -348,18 +373,31 @@ endif
 #    `-idirafter`) comes later in the search path than `-I`.
 CFLAGS += -isystem "$(SYSROOT_INC)"
 
+
+
+# ----------------
+#  object files
+# ----------------
+
 # These variables describe the locations of various files and directories in
 # the build tree.
 objs = $(patsubst %.c,$(OBJDIR)/%.o,$(1))
 asmobjs = $(patsubst %.s,$(OBJDIR)/%.o,$(1))
-DLMALLOC_OBJS = $(call objs,$(DLMALLOC_SOURCES))
-EMMALLOC_OBJS = $(call objs,$(EMMALLOC_SOURCES))
+
+# - core libc/malloc
 LIBC_BOTTOM_HALF_ALL_OBJS = $(call objs,$(LIBC_BOTTOM_HALF_ALL_SOURCES))
 LIBC_TOP_HALF_ALL_OBJS = $(call asmobjs,$(call objs,$(LIBC_TOP_HALF_ALL_SOURCES)))
+
+DLMALLOC_OBJS = $(call objs,$(DLMALLOC_SOURCES))
+EMMALLOC_OBJS = $(call objs,$(EMMALLOC_SOURCES))
+# @todo: mimalloc.
+
+LIBC_OBJS =
 ifeq ($(MALLOC_IMPL),dlmalloc)
 LIBC_OBJS += $(DLMALLOC_OBJS)
 else ifeq ($(MALLOC_IMPL),emmalloc)
 LIBC_OBJS += $(EMMALLOC_OBJS)
+# @todo: mimalloc.
 else ifeq ($(MALLOC_IMPL),none)
 # No object files to add.
 else
@@ -371,6 +409,8 @@ ifeq ($(BUILD_LIBC_TOP_HALF),yes)
 # libc-top-half is musl.
 LIBC_OBJS += $(LIBC_TOP_HALF_ALL_OBJS)
 endif
+
+# - libc extra
 MUSL_PRINTSCAN_OBJS = $(call objs,$(MUSL_PRINTSCAN_SOURCES))
 MUSL_PRINTSCAN_LONG_DOUBLE_OBJS = $(patsubst %.o,%.long-double.o,$(MUSL_PRINTSCAN_OBJS))
 MUSL_PRINTSCAN_NO_FLOATING_POINT_OBJS = $(patsubst %.o,%.no-floating-point.o,$(MUSL_PRINTSCAN_OBJS))
@@ -383,11 +423,41 @@ LIBWASI_EMULATED_SIGNAL_MUSL_OBJS = $(call objs,$(LIBWASI_EMULATED_SIGNAL_MUSL_S
 LIBDL_OBJS = $(call objs,$(LIBDL_SOURCES))
 LIBC_BOTTOM_HALF_CRT_OBJS = $(call objs,$(LIBC_BOTTOM_HALF_CRT_SOURCES))
 
-# These variables describe the locations of various files and
-# directories in the generated sysroot tree.
-SYSROOT_LIB := $(SYSROOT)/lib/$(TARGET_TRIPLE)
-SYSROOT_INC = $(SYSROOT)/include
-SYSROOT_SHARE = $(SYSROOT)/share/$(TARGET_TRIPLE)
+
+# - libc.so
+LIBC_SO_OBJS = $(patsubst %.o,%.pic.o,$(filter-out $(MUSL_PRINTSCAN_OBJS),$(LIBC_OBJS)))
+MUSL_PRINTSCAN_LONG_DOUBLE_SO_OBJS = $(patsubst %.o,%.pic.o,$(MUSL_PRINTSCAN_LONG_DOUBLE_OBJS))
+LIBWASI_EMULATED_MMAN_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_MMAN_OBJS))
+LIBWASI_EMULATED_PROCESS_CLOCKS_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_PROCESS_CLOCKS_OBJS))
+LIBWASI_EMULATED_GETPID_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_GETPID_OBJS))
+LIBWASI_EMULATED_SIGNAL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_SIGNAL_OBJS))
+LIBWASI_EMULATED_SIGNAL_MUSL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_SIGNAL_MUSL_OBJS))
+LIBDL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBDL_OBJS))
+BULK_MEMORY_SO_OBJS = $(patsubst %.o,%.pic.o,$(BULK_MEMORY_OBJS))
+DLMALLOC_SO_OBJS = $(patsubst %.o,%.pic.o,$(DLMALLOC_OBJS))
+LIBC_BOTTOM_HALF_ALL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBC_BOTTOM_HALF_ALL_OBJS))
+LIBC_TOP_HALF_ALL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBC_TOP_HALF_ALL_OBJS))
+
+PIC_OBJS = \
+	$(LIBC_SO_OBJS) \
+	$(MUSL_PRINTSCAN_LONG_DOUBLE_SO_OBJS) \
+	$(LIBWASI_EMULATED_MMAN_SO_OBJS) \
+	$(LIBWASI_EMULATED_PROCESS_CLOCKS_SO_OBJS) \
+	$(LIBWASI_EMULATED_GETPID_SO_OBJS) \
+	$(LIBWASI_EMULATED_SIGNAL_SO_OBJS) \
+	$(LIBWASI_EMULATED_SIGNAL_MUSL_SO_OBJS) \
+	$(LIBDL_SO_OBJS) \
+	$(BULK_MEMORY_SO_OBJS) \
+	$(DLMALLOC_SO_OBJS) \
+	$(LIBC_BOTTOM_HALF_ALL_SO_OBJS) \
+	$(LIBC_TOP_HALF_ALL_SO_OBJS) \
+	$(LIBC_BOTTOM_HALF_CRT_OBJS)
+
+
+
+# ----------------
+#  header files
+# ----------------
 
 # Files from musl's include directory that we don't want to install in the
 # sysroot's include directory.
@@ -473,35 +543,11 @@ ifeq ($(THREAD_MODEL), single)
 MUSL_OMIT_HEADERS += "pthread.h"
 endif
 
-default: finish
 
-LIBC_SO_OBJS = $(patsubst %.o,%.pic.o,$(filter-out $(MUSL_PRINTSCAN_OBJS),$(LIBC_OBJS)))
-MUSL_PRINTSCAN_LONG_DOUBLE_SO_OBJS = $(patsubst %.o,%.pic.o,$(MUSL_PRINTSCAN_LONG_DOUBLE_OBJS))
-LIBWASI_EMULATED_MMAN_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_MMAN_OBJS))
-LIBWASI_EMULATED_PROCESS_CLOCKS_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_PROCESS_CLOCKS_OBJS))
-LIBWASI_EMULATED_GETPID_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_GETPID_OBJS))
-LIBWASI_EMULATED_SIGNAL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_SIGNAL_OBJS))
-LIBWASI_EMULATED_SIGNAL_MUSL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBWASI_EMULATED_SIGNAL_MUSL_OBJS))
-LIBDL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBDL_OBJS))
-BULK_MEMORY_SO_OBJS = $(patsubst %.o,%.pic.o,$(BULK_MEMORY_OBJS))
-DLMALLOC_SO_OBJS = $(patsubst %.o,%.pic.o,$(DLMALLOC_OBJS))
-LIBC_BOTTOM_HALF_ALL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBC_BOTTOM_HALF_ALL_OBJS))
-LIBC_TOP_HALF_ALL_SO_OBJS = $(patsubst %.o,%.pic.o,$(LIBC_TOP_HALF_ALL_OBJS))
 
-PIC_OBJS = \
-	$(LIBC_SO_OBJS) \
-	$(MUSL_PRINTSCAN_LONG_DOUBLE_SO_OBJS) \
-	$(LIBWASI_EMULATED_MMAN_SO_OBJS) \
-	$(LIBWASI_EMULATED_PROCESS_CLOCKS_SO_OBJS) \
-	$(LIBWASI_EMULATED_GETPID_SO_OBJS) \
-	$(LIBWASI_EMULATED_SIGNAL_SO_OBJS) \
-	$(LIBWASI_EMULATED_SIGNAL_MUSL_SO_OBJS) \
-	$(LIBDL_SO_OBJS) \
-	$(BULK_MEMORY_SO_OBJS) \
-	$(DLMALLOC_SO_OBJS) \
-	$(LIBC_BOTTOM_HALF_ALL_SO_OBJS) \
-	$(LIBC_TOP_HALF_ALL_SO_OBJS) \
-	$(LIBC_BOTTOM_HALF_CRT_OBJS)
+# ----------------
+#  build rules
+# ----------------
 
 # TODO: Specify SDK version, e.g. libc.so.wasi-sdk-21, as SO_NAME once `wasm-ld`
 # supports it.
@@ -687,24 +733,11 @@ libc: include_dirs \
     $(SYSROOT_LIB)/libwasi-emulated-signal.a \
     $(SYSROOT_LIB)/libdl.a
 
-finish: startup_files libc
-	#
-	# Create empty placeholder libraries.
-	#
-	for name in m rt pthread crypt util xnet resolv; do \
-	    $(AR) crs "$(SYSROOT_LIB)/lib$${name}.a"; \
-	done
 
-	#
-	# The build succeeded! The generated sysroot is in $(SYSROOT).
-	#
 
-# The check for defined and undefined symbols expects there to be a heap
-# alloctor (providing malloc, calloc, free, etc). Skip this step if the build
-# is done without a malloc implementation.
-ifneq ($(MALLOC_IMPL),none)
-finish: check-symbols
-endif
+# ----------------
+#  check symbols
+# ----------------
 
 DEFINED_SYMBOLS = $(SYSROOT_SHARE)/defined-symbols.txt
 UNDEFINED_SYMBOLS = $(SYSROOT_SHARE)/undefined-symbols.txt
@@ -805,6 +838,32 @@ check-symbols: startup_files libc
 	# Check that the computed metadata matches the expected metadata.
 	# This ignores whitespace because on Windows the output has CRLF line endings.
 	diff -wur "expected/$(TARGET_TRIPLE)" "$(SYSROOT_SHARE)"
+
+
+
+# ----------------
+#  main rules
+# ----------------
+
+finish: startup_files libc
+	#
+	# Create empty placeholder libraries.
+	#
+	for name in m rt pthread crypt util xnet resolv; do \
+	    $(AR) crs "$(SYSROOT_LIB)/lib$${name}.a"; \
+	done
+
+	#
+	# The build succeeded! The generated sysroot is in $(SYSROOT).
+	#
+
+# The check for defined and undefined symbols expects there to be a heap
+# alloctor (providing malloc, calloc, free, etc). Skip this step if the build
+# is done without a malloc implementation.
+ifneq ($(MALLOC_IMPL),none)
+finish: check-symbols
+endif
+
 
 install: finish
 	mkdir -p "$(INSTALL_DIR)"
