@@ -15,7 +15,9 @@ NM ?= $(patsubst %clang,%llvm-nm,$(filter-out ccache sccache,$(CC)))
 ifeq ($(origin AR), default)
 AR = $(patsubst %clang,%llvm-ar,$(filter-out ccache sccache,$(CC)))
 endif
+
 EXTRA_CFLAGS ?= -O2 -DNDEBUG
+
 # The directory where we build the sysroot.
 SYSROOT ?= $(CURDIR)/sysroot
 # A directory to install to for "make install".
@@ -68,8 +70,15 @@ DLMALLOC_DIR = dlmalloc
 DLMALLOC_SRC_DIR = $(DLMALLOC_DIR)/src
 DLMALLOC_SOURCES = $(DLMALLOC_SRC_DIR)/dlmalloc.c
 DLMALLOC_INC = $(DLMALLOC_DIR)/include
+
 EMMALLOC_DIR = emmalloc
 EMMALLOC_SOURCES = $(EMMALLOC_DIR)/emmalloc.c
+
+MIMALLOC_DIR = mimalloc
+MIMALLOC_SRC_DIR = $(MIMALLOC_DIR)/src
+MIMALLOC_INC_DIR = $(MIMALLOC_DIR)/include
+MIMALLOC_SOURCES = $(MIMALLOC_SRC_DIR)/static.c
+
 LIBC_BOTTOM_HALF_DIR = libc-bottom-half
 LIBC_BOTTOM_HALF_CLOUDLIBC_SRC = $(LIBC_BOTTOM_HALF_DIR)/cloudlibc/src
 LIBC_BOTTOM_HALF_CLOUDLIBC_SRC_INC = $(LIBC_BOTTOM_HALF_CLOUDLIBC_SRC)/include
@@ -390,14 +399,15 @@ LIBC_TOP_HALF_ALL_OBJS = $(call asmobjs,$(call objs,$(LIBC_TOP_HALF_ALL_SOURCES)
 
 DLMALLOC_OBJS = $(call objs,$(DLMALLOC_SOURCES))
 EMMALLOC_OBJS = $(call objs,$(EMMALLOC_SOURCES))
-# @todo: mimalloc.
+MIMALLOC_OBJS = $(call objs,$(MIMALLOC_SOURCES))
 
 LIBC_OBJS =
 ifeq ($(MALLOC_IMPL),dlmalloc)
 LIBC_OBJS += $(DLMALLOC_OBJS)
 else ifeq ($(MALLOC_IMPL),emmalloc)
 LIBC_OBJS += $(EMMALLOC_OBJS)
-# @todo: mimalloc.
+else ifeq ($(MALLOC_IMPL),mimalloc)
+LIBC_OBJS += $(MIMALLOC_OBJS)
 else ifeq ($(MALLOC_IMPL),none)
 # No object files to add.
 else
@@ -649,6 +659,11 @@ $(OBJDIR)/%.o: %.s include_dirs
 $(DLMALLOC_OBJS) $(DLMALLOC_SO_OBJS): CFLAGS += \
     -I$(DLMALLOC_INC)
 
+$(MIMALLOC_OBJS): CFLAGS += \
+    -I$(MIMALLOC_INC_DIR) \
+	-DMI_MALLOC_OVERRIDE \
+	-Wno-deprecated-pragma
+
 startup_files $(LIBC_BOTTOM_HALF_ALL_OBJS) $(LIBC_BOTTOM_HALF_ALL_SO_OBJS): CFLAGS += \
     -I$(LIBC_BOTTOM_HALF_HEADERS_PRIVATE) \
     -I$(LIBC_BOTTOM_HALF_CLOUDLIBC_SRC_INC) \
@@ -741,6 +756,11 @@ libc: include_dirs \
 
 DEFINED_SYMBOLS = $(SYSROOT_SHARE)/defined-symbols.txt
 UNDEFINED_SYMBOLS = $(SYSROOT_SHARE)/undefined-symbols.txt
+
+CKSYM_EXPECTED_DIR = expected/$(TARGET_TRIPLE)
+ifeq ($(MALLOC_IMPL),mimalloc)
+	CKSYM_EXPECTED_DIR := $(CKSYM_EXPECTED_DIR)-mimalloc
+endif
 
 check-symbols: startup_files libc
 	#
@@ -837,7 +857,7 @@ check-symbols: startup_files libc
 
 	# Check that the computed metadata matches the expected metadata.
 	# This ignores whitespace because on Windows the output has CRLF line endings.
-	diff -wur "expected/$(TARGET_TRIPLE)" "$(SYSROOT_SHARE)"
+	diff -wur "$(CKSYM_EXPECTED_DIR)" "$(SYSROOT_SHARE)"
 
 
 
