@@ -16,10 +16,19 @@ ifeq ($(origin AR), default)
 AR = $(patsubst %clang,%llvm-ar,$(filter-out ccache sccache,$(CC)))
 endif
 
+BUILD_MODE ?= release
+
+ifeq ($(BUILD_MODE), debug)
+EXTRA_CFLAGS ?= -g -O0 -DDEBUG
+else ifeq ($(BUILD_MODE), release)
 EXTRA_CFLAGS ?= -O2 -DNDEBUG
+else
+$(error unknown build mode $(BUILD_MODE))
+endif
 
 # The directory where we build the sysroot.
-SYSROOT ?= $(CURDIR)/sysroot
+SYSROOT_BASE ?= $(CURDIR)/sysroot
+SYSROOT ?= $(SYSROOT_BASE)/$(BUILD_MODE)
 # A directory to install to for "make install".
 INSTALL_DIR ?= /usr/local
 # single or posix; note that pthread support is still a work-in-progress.
@@ -29,7 +38,8 @@ MALLOC_IMPL ?= dlmalloc
 # yes or no
 BUILD_LIBC_TOP_HALF ?= yes
 # The directory where we will store intermediate artifacts.
-OBJDIR ?= build/$(TARGET_TRIPLE)
+OBJDIR_BASE ?= $(CURDIR)/build
+OBJDIR ?= $(OBJDIR_BASE)/$(TARGET_TRIPLE)/$(BUILD_MODE)
 
 # When the length is no larger than this threshold, we consider the
 # overhead of bulk memory opcodes to outweigh the performance benefit,
@@ -656,13 +666,27 @@ $(OBJDIR)/%.o: %.s include_dirs
 
 -include $(shell find $(OBJDIR) -name \*.d)
 
+
 $(DLMALLOC_OBJS) $(DLMALLOC_SO_OBJS): CFLAGS += \
     -I$(DLMALLOC_INC)
+
 
 $(MIMALLOC_OBJS): CFLAGS += \
     -I$(MIMALLOC_INC_DIR) \
 	-DMI_MALLOC_OVERRIDE \
 	-Wno-deprecated-pragma
+
+ifeq ($(BUILD_MODE), debug)
+$(MIMALLOC_OBJS): CFLAGS += \
+	-DMI_DEBUG=3 \
+	-DMI_SHOW_ERRORS=1
+else ifeq ($(BUILD_MODE), release)
+$(MIMALLOC_OBJS): CFLAGS += \
+	-DMI_DEBUG=0
+else
+$(error unknown build mode $(BUILD_MODE))
+endif
+
 
 startup_files $(LIBC_BOTTOM_HALF_ALL_OBJS) $(LIBC_BOTTOM_HALF_ALL_SO_OBJS): CFLAGS += \
     -I$(LIBC_BOTTOM_HALF_HEADERS_PRIVATE) \
@@ -759,7 +783,7 @@ UNDEFINED_SYMBOLS = $(SYSROOT_SHARE)/undefined-symbols.txt
 
 CKSYM_EXPECTED_DIR = expected/$(TARGET_TRIPLE)
 ifeq ($(MALLOC_IMPL),mimalloc)
-	CKSYM_EXPECTED_DIR := $(CKSYM_EXPECTED_DIR)-mimalloc
+CKSYM_EXPECTED_DIR := $(CKSYM_EXPECTED_DIR)-mimalloc
 endif
 
 check-symbols: startup_files libc
@@ -881,7 +905,9 @@ finish: startup_files libc
 # alloctor (providing malloc, calloc, free, etc). Skip this step if the build
 # is done without a malloc implementation.
 ifneq ($(MALLOC_IMPL),none)
+ifneq ($(BUILD_MODE),debug) # @todo: `-g` requires `__tls_base`, which is odd.
 finish: check-symbols
+endif
 endif
 
 
@@ -890,7 +916,7 @@ install: finish
 	cp -r "$(SYSROOT)/lib" "$(SYSROOT)/share" "$(SYSROOT)/include" "$(INSTALL_DIR)"
 
 clean:
-	$(RM) -r "$(OBJDIR)"
-	$(RM) -r "$(SYSROOT)"
+	$(RM) -r "$(OBJDIR_BASE)"
+	$(RM) -r "$(SYSROOT_BASE)"
 
 .PHONY: default startup_files libc libc_so finish install include_dirs clean check-symbols
